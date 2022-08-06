@@ -1,0 +1,4 @@
+.metaflow
+*.csv
+.env
+*.gz
