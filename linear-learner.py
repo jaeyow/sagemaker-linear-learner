@@ -9,7 +9,7 @@ except:
 
 class SageMakerLinearLearnerPipeline(FlowSpec):
     """
-    LinearLearnerPipeline is an end-to-end flow for F1 Predictor
+    SageMakerLinearLearnerPipeline is an end-to-end flow for SageMaker Linear Learner Built-in Algorithm
     """
 
     @step
