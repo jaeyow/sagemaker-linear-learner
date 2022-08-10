@@ -7,9 +7,9 @@ try:
 except:
     print("No dotenv package")
 
-class LinearLearnerPipeline(FlowSpec):
+class SageMakerLinearLearnerPipeline(FlowSpec):
     """
-    F1PredictorPipeline is an end-to-end flow for F1 Predictor
+    LinearLearnerPipeline is an end-to-end flow for F1 Predictor
     """
 
     @step
@@ -19,7 +19,6 @@ class LinearLearnerPipeline(FlowSpec):
         in order like environment variables, connection strings, etc, and if there are
         any issues, fail fast here, now.
         """
-        # Permissions and environment variables
         import sagemaker
         import boto3
 
@@ -136,19 +135,134 @@ class LinearLearnerPipeline(FlowSpec):
             output_path=self.output_location,
             sagemaker_session=sess,
         )
-        linear.set_hyperparameters(feature_dim=784, predictor_type="binary_classifier", mini_batch_size=200)
+        linear.set_hyperparameters(
+            epochs=1,
+            feature_dim=784,
+            predictor_type="binary_classifier",
+            mini_batch_size=200)
 
         linear.fit({"train": self.s3_train_data})
 
-        self.next(self.deploy_winning_model)    
+        # after an Estimator fit, the model will have been persisted in the defined S3 output location base folder
+        self.model_data = linear.model_data
+        print(f'Estimator model data: {self.model_data}')
+
+        self.next(self.create_sagemaker_model)    
 
     @step
-    def deploy_winning_model(self):
+    def create_sagemaker_model(self):
         """
-        Placeholder for deploying model
+        Create SageMaker Model
         """
-        self.next(self.end)
+        import boto3
+        from sagemaker import image_uris
+        from time import gmtime, strftime
 
+        container = image_uris.retrieve(region=boto3.Session().region_name, framework="linear-learner")
+        client = boto3.client("sagemaker")
+        
+        primary_container = {
+            "Image": container,
+            "ModelDataUrl": self.model_data
+        }
+
+        self.model_name = "linear-learner-" + strftime("%Y-%m-%d-%H-%M-%S", gmtime())
+        create_model_response2 = client.create_model(
+            ModelName=self.model_name,
+            ExecutionRoleArn=self.role,
+            PrimaryContainer=primary_container
+        )
+
+        print(f"Model Arn: {create_model_response2['ModelArn']}")
+
+        self.next(self.create_sagemaker_endpoint_configuration)
+
+    @step
+    def create_sagemaker_endpoint_configuration(self):
+        """
+        Create SageMaker Endpoint Configuration
+        """
+
+        import boto3
+        from time import gmtime, strftime
+        client = boto3.client("sagemaker")
+
+        self.endpoint_config_name = "LinearLearnerEndpointConfig-" + strftime("%Y-%m-%d-%H-%M-%S", gmtime())
+
+        print(f"Endpoint Configuration name: {self.endpoint_config_name}")
+
+        create_endpoint_config_response = client.create_endpoint_config(
+            EndpointConfigName=self.endpoint_config_name,
+            ProductionVariants=[
+                {
+                    "InstanceType": "ml.m4.xlarge",
+                    "InitialInstanceCount": 1,
+                    "InitialVariantWeight": 1,
+                    "ModelName": self.model_name,
+                    "VariantName": "AllTraffic",
+                }
+            ],
+        )
+
+        print("Endpoint Config Arn: " + create_endpoint_config_response["EndpointConfigArn"])
+        
+        self.next(self.create_sagemaker_endpoint)
+
+    @step
+    def create_sagemaker_endpoint(self):
+        """
+        Create SageMaker Endpoint
+        """
+        import time
+        import boto3
+        from time import gmtime, strftime
+        client = boto3.client("sagemaker")
+
+        self.endpoint_name = "LinearLearnerEndpoint-" + strftime("%Y-%m-%d-%H-%M-%S", gmtime())
+        print(f"Endpoint name: {self.endpoint_name}")
+
+        create_endpoint_response = client.create_endpoint(
+            EndpointName=self.endpoint_name,
+            EndpointConfigName=self.endpoint_config_name
+        )
+        print(f"Endpoint Arn: {create_endpoint_response['EndpointArn']}")
+
+        resp = client.describe_endpoint(EndpointName=self.endpoint_name)
+        status = resp["EndpointStatus"]
+        print(f"Status: {status}...")
+
+        while status == "Creating":
+            time.sleep(60)
+            resp = client.describe_endpoint(EndpointName=self.endpoint_name)
+            status = resp["EndpointStatus"]
+            print(f"Status: {status}...")
+
+        print(f"Arn: {resp['EndpointArn']}")
+        print(f"Status: {status}...")
+        
+        self.next(self.perform_predictions)
+
+    @step
+    def perform_predictions(self):
+        """
+        Placeholder for performing predictions on the SageMaker Endpoint
+        """
+        
+        self.next(self.delete_sagemaker_endpoint)
+
+    @step
+    def delete_sagemaker_endpoint(self):
+        """
+        Delete SageMaker Endpoint - you don't want that AWS bill, do you?
+        """
+        import boto3
+        client = boto3.client("sagemaker")
+
+        client.delete_endpoint(EndpointName=self.endpoint_name)
+        print(f"Deleting endpoint: {self.endpoint_name}...")
+        
+        self.next(self.end)        
+                 
     @step   
     def end(self):
         """
@@ -157,4 +271,4 @@ class LinearLearnerPipeline(FlowSpec):
         """
 
 if __name__ == "__main__":
-    LinearLearnerPipeline()
+    SageMakerLinearLearnerPipeline()
