@@ -40,8 +40,7 @@ class SageMakerLinearLearnerPipeline(FlowSpec):
         # Define IAM role
         self.role = os.environ['SAGEMAKER_EXECUTION_ROLE']
         
-        self.next(
-          self.data_ingestion)
+        self.next(self.data_ingestion)
 
     @step
     def data_ingestion(self):
