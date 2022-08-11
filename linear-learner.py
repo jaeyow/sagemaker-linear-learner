@@ -1,4 +1,6 @@
+import io
 from metaflow import FlowSpec, step
+import numpy as np
 import os
 
 try:
@@ -46,6 +48,9 @@ class SageMakerLinearLearnerPipeline(FlowSpec):
     def data_ingestion(self):
         """
         Data Ingestion
+        - download MNIST dataset from S3
+        - use the pickle library to load into memory
+        - for smallish datasets like this, we can easily load it in memory
         """
         import boto3
         import pickle, gzip
@@ -62,6 +67,8 @@ class SageMakerLinearLearnerPipeline(FlowSpec):
     def data_inspection(self):
         """
         Data Inspection
+        - very brief EDA, but in this case we just want to see what our data looks like
+        - just save to a png file, since we are not running this in a Jupyter notebook, not able to display the image
         """
         import matplotlib.pyplot as plt
 
@@ -83,6 +90,9 @@ class SageMakerLinearLearnerPipeline(FlowSpec):
     def data_conversion(self):
         """
         Data Conversion
+        - converts training data, both vectors and labels into RecordIO format
+        - ready for training in SageMaker
+        - but have to upload to S3 in the next step
         """
         import io
         import numpy as np
@@ -101,6 +111,7 @@ class SageMakerLinearLearnerPipeline(FlowSpec):
     def upload_training_data(self):
         """
         Upload Training Data
+        - upload RecordIO formatted trining data to S3
         """
         import boto3
         import os
@@ -115,11 +126,17 @@ class SageMakerLinearLearnerPipeline(FlowSpec):
     def model_training(self):
         """
         Model training
+        - now training starts, first we specify the Docker image for the required algorithm, in this case linear learner
+        - create an estimator with the specified parameters, 
+        - set the static hyperparamters, and SageMaker will automatically calculate those set as 'auto'
+        - calling fit() starts the training process, upto the specified number of epochs
+        - the save the model name and location for the next steps
+        - take note that we have to specify an instance for trianing, which may be different from the endpoint instance
         """
         import boto3
         import sagemaker
         from sagemaker import image_uris
-        container = image_uris.retrieve(region=boto3.Session().region_name, framework="linear-learner")
+        image = image_uris.retrieve(region=boto3.Session().region_name, framework="linear-learner")
 
         self.output_location = f"s3://{self.bucket}/{self.prefix}/output"
         print(f"training artifacts will be uploaded to: {self.output_location}")
@@ -127,7 +144,7 @@ class SageMakerLinearLearnerPipeline(FlowSpec):
         sess = sagemaker.Session()
 
         linear = sagemaker.estimator.Estimator(
-            container,
+            image,
             self.role,
             instance_count=1,
             instance_type="ml.c4.xlarge",
@@ -135,7 +152,7 @@ class SageMakerLinearLearnerPipeline(FlowSpec):
             sagemaker_session=sess,
         )
         linear.set_hyperparameters(
-            epochs=1,
+            epochs=10,
             feature_dim=784,
             predictor_type="binary_classifier",
             mini_batch_size=200)
@@ -152,27 +169,29 @@ class SageMakerLinearLearnerPipeline(FlowSpec):
     def create_sagemaker_model(self):
         """
         Create SageMaker Model
+        - once model training has completed, a Model can now be created
+        - this will be the basis for creating our endpoint in the next steps
         """
         import boto3
         from sagemaker import image_uris
         from time import gmtime, strftime
 
-        container = image_uris.retrieve(region=boto3.Session().region_name, framework="linear-learner")
+        image = image_uris.retrieve(region=boto3.Session().region_name, framework="linear-learner")
         client = boto3.client("sagemaker")
         
         primary_container = {
-            "Image": container,
+            "Image": image,
             "ModelDataUrl": self.model_data
         }
 
         self.model_name = "linear-learner-" + strftime("%Y-%m-%d-%H-%M-%S", gmtime())
-        create_model_response2 = client.create_model(
+        create_model_response = client.create_model(
             ModelName=self.model_name,
             ExecutionRoleArn=self.role,
             PrimaryContainer=primary_container
         )
 
-        print(f"Model Arn: {create_model_response2['ModelArn']}")
+        print(f"Model Arn: {create_model_response['ModelArn']}")
 
         self.next(self.create_sagemaker_endpoint_configuration)
 
@@ -180,8 +199,10 @@ class SageMakerLinearLearnerPipeline(FlowSpec):
     def create_sagemaker_endpoint_configuration(self):
         """
         Create SageMaker Endpoint Configuration
+        - specifies the configuration for our endpoint in the next step
+        - specify the instance type, traffic ratio for A/B testing, but we only have one instance here
+        - using the model created in the previous step
         """
-
         import boto3
         from time import gmtime, strftime
         client = boto3.client("sagemaker")
@@ -194,7 +215,7 @@ class SageMakerLinearLearnerPipeline(FlowSpec):
             EndpointConfigName=self.endpoint_config_name,
             ProductionVariants=[
                 {
-                    "InstanceType": "ml.m4.xlarge",
+                    "InstanceType": "ml.c4.xlarge",
                     "InitialInstanceCount": 1,
                     "InitialVariantWeight": 1,
                     "ModelName": self.model_name,
@@ -211,6 +232,9 @@ class SageMakerLinearLearnerPipeline(FlowSpec):
     def create_sagemaker_endpoint(self):
         """
         Create SageMaker Endpoint
+        - finally ready to create the endpoint using the container specified in the configuration and model
+        - inference endpoints may have different instance requirements as the training instance
+        - poll the endpoint creation until finished, this takes about 5 minutes
         """
         import time
         import boto3
@@ -221,8 +245,8 @@ class SageMakerLinearLearnerPipeline(FlowSpec):
         print(f"Endpoint name: {self.endpoint_name}")
 
         create_endpoint_response = client.create_endpoint(
-            EndpointName=self.endpoint_name,
-            EndpointConfigName=self.endpoint_config_name
+            EndpointName = self.endpoint_name,
+            EndpointConfigName = self.endpoint_config_name
         )
         print(f"Endpoint Arn: {create_endpoint_response['EndpointArn']}")
 
@@ -239,13 +263,38 @@ class SageMakerLinearLearnerPipeline(FlowSpec):
         print(f"Arn: {resp['EndpointArn']}")
         print(f"Status: {status}...")
         
-        self.next(self.perform_predictions)
+        self.next(self.perform_prediction)
+
+    # Simple function to create a csv from our numpy array
+    def np2csv(self, arr):
+        csv = io.BytesIO()
+        np.savetxt(csv, arr, delimiter=",", fmt="%g")
+        return csv.getvalue().decode().rstrip()
 
     @step
-    def perform_predictions(self):
+    def perform_prediction(self):
         """
-        Placeholder for performing predictions on the SageMaker Endpoint
+        Placeholder for performing prediction on the SageMaker Endpoint
+        - perform one prediction to see if our endpoint works
+        - this example will not push it to a Rest API, perhaps in the next exercise we'll spin up AWS API Gateway with the model endpoint
         """
+        import boto3
+        import json
+        runtime_client = boto3.client("runtime.sagemaker")
+
+        payload = self.np2csv(self.test_set[0][10:11])
+
+        try:
+            response = runtime_client.invoke_endpoint(
+                EndpointName=self.endpoint_name,
+                ContentType="text/csv",
+                Body=payload)
+
+            result = response["Body"].read().decode("ascii")
+            print(f"Response: {result}")
+
+        except:
+            print("Endpoint invocation exception occurred, deleting endpoint...")
         
         self.next(self.delete_sagemaker_endpoint)
 
@@ -253,12 +302,13 @@ class SageMakerLinearLearnerPipeline(FlowSpec):
     def delete_sagemaker_endpoint(self):
         """
         Delete SageMaker Endpoint - you don't want that AWS bill, do you?
+        - after all that work, delete all to avoid a credit card bill :)
         """
         import boto3
         client = boto3.client("sagemaker")
 
         client.delete_endpoint(EndpointName=self.endpoint_name)
-        print(f"Deleting endpoint: {self.endpoint_name}...")
+        print(f"Deleting endpoint: {self.endpoint_name}, coz' I don't want AWS bills...")
         
         self.next(self.end)        
                  
