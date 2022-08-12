@@ -25,6 +25,12 @@ class SageMakerLinearLearnerPipeline(FlowSpec):
         import boto3
 
         assert os.environ['SAGEMAKER_EXECUTION_ROLE']
+        assert os.environ['AWS_ACCESS_KEY_ID']
+        assert os.environ['AWS_SECRET_ACCESS_KEY']
+        assert os.environ['METAFLOW_DATASTORE_SYSROOT_S3']
+        assert os.environ['METAFLOW_DATATOOLS_SYSROOT_S3']
+        assert os.environ['METAFLOW_DEFAULT_DATASTORE']
+        assert os.environ['METAFLOW_DEFAULT_METADATA']
 
         sess = sagemaker.Session()
 
