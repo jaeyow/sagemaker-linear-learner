@@ -2,3 +2,4 @@ metaflow==2.6.1
 python-dotenv==0.20.0
 numpy==1.23.0
 sagemaker==2.103.0
+matplotlib==3.5.2
