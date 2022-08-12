@@ -32,6 +32,7 @@ jobs:
           METAFLOW_DATATOOLS_SYSROOT_S3: ${{ secrets.METAFLOW_DATATOOLS_SYSROOT_S3 }}
           SAGEMAKER_EXECUTION_ROLE: ${{ secrets.SAGEMAKER_EXECUTION_ROLE }}
           METAFLOW_DEFAULT_DATASTORE: ${{ secrets.METAFLOW_DEFAULT_DATASTORE }}
+          METAFLOW_DEFAULT_METADATA: ${{ secrets.METAFLOW_DEFAULT_METADATA }}
         run: |
           python 'linear-learner.py' run
 
