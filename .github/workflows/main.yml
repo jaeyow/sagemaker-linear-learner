@@ -1,4 +1,4 @@
-name: SageMaker Linear Learner main metaflow action
+name: SageMaker Linear Learner main Metaflow action
 
 on:
   push:

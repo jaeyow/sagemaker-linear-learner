@@ -32,7 +32,7 @@ class SageMakerLinearLearnerPipeline(FlowSpec):
         assert os.environ['METAFLOW_DEFAULT_DATASTORE']
         assert os.environ['METAFLOW_DEFAULT_METADATA']
 
-        sess = sagemaker.Session()
+        session = sagemaker.Session()
 
         self.region = boto3.Session().region_name
 
@@ -42,7 +42,7 @@ class SageMakerLinearLearnerPipeline(FlowSpec):
 
         # S3 bucket for saving code and model artifacts.
         # Feel free to specify a different bucket and prefix
-        self.bucket = sess.default_bucket()
+        self.bucket = session.default_bucket()
         self.prefix = "sagemaker/DEMO-linear-mnist"
 
         # Define IAM role
@@ -67,29 +67,6 @@ class SageMakerLinearLearnerPipeline(FlowSpec):
         with gzip.open("mnist.pkl.gz", "rb") as f:
             self.train_set, self.valid_set, self.test_set = pickle.load(f, encoding="latin1")
 
-        self.next(self.data_inspection)
-
-    @step
-    def data_inspection(self):
-        """
-        Data Inspection
-        - very brief EDA, but in this case we just want to see what our data looks like
-        - just save to a png file, since we are not running this in a Jupyter notebook, not able to display the image
-        """
-        import matplotlib.pyplot as plt
-
-        plt.rcParams["figure.figsize"] = (2, 10)
-
-        def show_digit(img, caption="", subplot=None):
-            if subplot is None:
-                _, (subplot) = plt.subplots(1, 1)
-            imgr = img.reshape((28, 28))
-            subplot.axis("off")
-            subplot.imshow(imgr, cmap="gray")
-            plt.title(caption)
-            plt.savefig('sample-digit.png')
-
-        show_digit(self.train_set[0][30], f"This is a {self.train_set[1][30]}")
         self.next(self.data_conversion)
 
     @step
@@ -134,10 +111,10 @@ class SageMakerLinearLearnerPipeline(FlowSpec):
         Model training
         - now training starts, first we specify the Docker image for the required algorithm, in this case linear learner
         - create an estimator with the specified parameters, 
-        - set the static hyperparamters, and SageMaker will automatically calculate those set as 'auto'
+        - set the static hyperparameters, and SageMaker will automatically calculate those set as 'auto'
         - calling fit() starts the training process, upto the specified number of epochs
         - the save the model name and location for the next steps
-        - take note that we have to specify an instance for trianing, which may be different from the endpoint instance
+        - take note that we have to specify an instance for training, which may be different from the endpoint instance
         """
         import boto3
         import sagemaker
@@ -147,7 +124,7 @@ class SageMakerLinearLearnerPipeline(FlowSpec):
         self.output_location = f"s3://{self.bucket}/{self.prefix}/output"
         print(f"training artifacts will be uploaded to: {self.output_location}")
 
-        sess = sagemaker.Session()
+        session = sagemaker.Session()
 
         linear = sagemaker.estimator.Estimator(
             image,
@@ -155,7 +132,7 @@ class SageMakerLinearLearnerPipeline(FlowSpec):
             instance_count=1,
             instance_type="ml.c4.xlarge",
             output_path=self.output_location,
-            sagemaker_session=sess,
+            sagemaker_session=session,
         )
         linear.set_hyperparameters(
             epochs=10,
@@ -190,7 +167,7 @@ class SageMakerLinearLearnerPipeline(FlowSpec):
             "ModelDataUrl": self.model_data
         }
 
-        self.model_name = "linear-learner-" + strftime("%Y-%m-%d-%H-%M-%S", gmtime())
+        self.model_name = f"linear-learner-{strftime('%Y-%m-%d-%H-%M-%S', gmtime())}"
         create_model_response = client.create_model(
             ModelName=self.model_name,
             ExecutionRoleArn=self.role,
@@ -213,7 +190,7 @@ class SageMakerLinearLearnerPipeline(FlowSpec):
         from time import gmtime, strftime
         client = boto3.client("sagemaker")
 
-        self.endpoint_config_name = "LinearLearnerEndpointConfig-" + strftime("%Y-%m-%d-%H-%M-%S", gmtime())
+        self.endpoint_config_name = f"LinearLearnerEndpointConfig-{strftime('%Y-%m-%d-%H-%M-%S', gmtime())}" 
 
         print(f"Endpoint Configuration name: {self.endpoint_config_name}")
 
@@ -247,7 +224,7 @@ class SageMakerLinearLearnerPipeline(FlowSpec):
         from time import gmtime, strftime
         client = boto3.client("sagemaker")
 
-        self.endpoint_name = "LinearLearnerEndpoint-" + strftime("%Y-%m-%d-%H-%M-%S", gmtime())
+        self.endpoint_name = f"LinearLearnerEndpoint-{strftime('%Y-%m-%d-%H-%M-%S', gmtime())}"
         print(f"Endpoint name: {self.endpoint_name}")
 
         create_endpoint_response = client.create_endpoint(
